@@ -57,6 +57,18 @@ class GeminiBot:
         except Exception:
             return False
 
+    def get_tab_titles(self, handles):
+        """برچسب پنجره/تب‌ها را برمی‌گرداند."""
+        titles = {}
+        for h in handles:
+            try:
+                self.driver.switch_to.window(h)
+                time.sleep(0.2)
+                titles[h] = self.driver.title or "(بدون عنوان)"
+            except Exception:
+                titles[h] = "(خطا در خواندن عنوان)"
+        return titles
+
     def kill_overlays(self):
         """
         تابع حیاتی برای پایداری:

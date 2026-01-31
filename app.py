@@ -128,6 +128,9 @@ with st.sidebar:
             st.session_state['bot_instance'] = bot
             # ذخیره لیست تب‌ها به صورت یکتا (Anti-Duplication)
             st.session_state['active_tabs_list'] = list(dict.fromkeys(bot.active_tabs))
+            # عناوین تب‌ها
+            st.session_state['tab_titles'] = bot.get_tab_titles(st.session_state['active_tabs_list'])
+            st.session_state['allowed_tabs'] = st.session_state['active_tabs_list'][:]
             st.session_state['connected'] = True
         else:
             st.error(msg)
@@ -135,6 +138,24 @@ with st.sidebar:
             
     st.markdown("---")
     st.info("💡 **نکته:** برای پایداری بیشتر، پنجره مرورگر را در مانیتور باز نگه دارید و مینیمایز نکنید.")
+
+    st.markdown("---")
+    st.header("🪟 تب‌های فعال")
+    if st.session_state.get('connected'):
+        if st.button("🔄 بروزرسانی تب‌ها"):
+            bot = st.session_state['bot_instance']
+            ok, _ = bot.connect()
+            if ok:
+                st.session_state['active_tabs_list'] = list(dict.fromkeys(bot.active_tabs))
+                st.session_state['tab_titles'] = bot.get_tab_titles(st.session_state['active_tabs_list'])
+                st.session_state['allowed_tabs'] = st.session_state['active_tabs_list'][:]
+        titles_map = st.session_state.get('tab_titles', {})
+        labels = [f"Tab {i+1} — {titles_map.get(h, '(بدون عنوان)')}" for i, h in enumerate(st.session_state.get('active_tabs_list', []))]
+        handles = st.session_state.get('active_tabs_list', [])
+        preselected = st.session_state.get('allowed_tabs', handles)
+        selection = st.multiselect("انتخاب تب‌های مجاز", options=list(zip(labels, handles)), format_func=lambda x: x[0], default=[(f"Tab {i+1} — {titles_map.get(h, '(بدون عنوان)')}", h) for h in preselected], label_visibility="collapsed")
+        # استخراج هندل‌ها از انتخاب
+        st.session_state['allowed_tabs'] = [h for (_, h) in selection]
 
     st.markdown("---")
     st.header("🧠 مدل هوش مصنوعی")
@@ -157,6 +178,10 @@ with st.sidebar:
     refresh_every = st.number_input("بعد از چند فایل رفرش شود؟ (0 = هرگز)", min_value=0, value=0, step=1)
     refresh_wait = st.number_input("زمان انتظار بعد رفرش (ثانیه)", min_value=5, value=12, step=1)
     refresh_attempts = st.number_input("حداکثر تعداد رفرش مجدد در صورت شکست", min_value=1, max_value=3, value=2, step=1)
+
+    st.markdown("---")
+    st.header("⏱️ انتظار پاسخ")
+    wait_timeout_minutes = st.number_input("اگر پاسخی در این مدت نیامد، تب رفرش و فایل دوباره ارسال شود (دقیقه، 0 = غیرفعال)", min_value=0.0, value=4.0, step=0.5)
 
     st.markdown("---")
     st.header("🧪 چت موقت (Temporary Chat)")
@@ -217,8 +242,11 @@ if start_trigger:
         # تلاش مجدد مخفی برای اتصال اگر تب‌ها پریده باشند
         bot.connect()
 
-    # استفاده از لیست تب‌های ذخیره شده در سشن برای جلوگیری از پرش
-    tabs = st.session_state.get('active_tabs_list', bot.active_tabs)
+    # استفاده از لیست تب‌های ذخیره شده در سشن برای جلوگیری از پرش و فیلتر تب‌های مجاز
+    all_tabs = st.session_state.get('active_tabs_list', bot.active_tabs)
+    allowed_tabs = st.session_state.get('allowed_tabs', all_tabs)
+    # حفظ ترتیب و حذف تب‌هایی که دیگر وجود ندارند
+    tabs = [t for t in all_tabs if t in allowed_tabs]
 
     if not tabs:
         st.error("❌ هیچ تبی شناسایی نشد. لطفاً مرورگر را چک کنید.")
@@ -361,6 +389,36 @@ if start_trigger:
             
             if tab_states[tab_handle]['status'] == 'WORKING':
                 active_workers += 1
+
+                # تایم‌اوت پاسخ و رفرش تب در صورت نیاز
+                if wait_timeout_minutes > 0:
+                    elapsed = time.time() - tab_states[tab_handle]['start_time']
+                    if elapsed >= wait_timeout_minutes * 60:
+                        current_file = tab_states[tab_handle]['file']
+                        file_name = os.path.basename(current_file) if current_file else "---"
+                        st.toast(f"⏱️ تب {tabs.index(tab_handle)+1} پاسخی نداد؛ رفرش و ارسال مجدد: {file_name}", icon="⏳")
+
+                        ok_ready = bot.refresh_tab_and_wait(tab_handle, max_attempts=int(refresh_attempts), wait_timeout=int(refresh_wait))
+                        if ok_ready:
+                            if use_temp_chat:
+                                bot.toggle_temp_chat()
+                            else:
+                                bot.ensure_fresh_chat()
+                            # بازگرداندن فایل به صف برای ارسال دوباره
+                            if current_file:
+                                files_queue.insert(0, current_file)
+                        else:
+                            st.toast(f"⛔ تب {tabs.index(tab_handle)+1} بعد از تایم‌اوت آماده نشد و از مدار خارج شد.", icon="💀")
+                            dead_tabs.append(tab_handle)
+                            tab_states[tab_handle]['status'] = 'DEAD'
+                            tabs_to_remove.append(tab_handle)
+
+                        # ریست وضعیت تب برای ادامه حلقه
+                        tab_states[tab_handle]['status'] = 'IDLE'
+                        tab_states[tab_handle]['file'] = None
+                        tab_states[tab_handle]['token'] = None
+                        tab_states[tab_handle]['start_time'] = 0
+                        continue
                 
                 bot.focus_tab(tab_handle)
                 
