@@ -150,10 +150,18 @@ with st.sidebar:
                 st.session_state['tab_titles'] = bot.get_tab_titles(st.session_state['active_tabs_list'])
                 st.session_state['allowed_tabs'] = st.session_state['active_tabs_list'][:]
         titles_map = st.session_state.get('tab_titles', {})
-        labels = [f"Tab {i+1} — {titles_map.get(h, '(بدون عنوان)')}" for i, h in enumerate(st.session_state.get('active_tabs_list', []))]
         handles = st.session_state.get('active_tabs_list', [])
+        labels = [f"Tab {i+1} — {titles_map.get(h, '(بدون عنوان)')}" for i, h in enumerate(handles)]
+        options = list(zip(labels, handles))
         preselected = st.session_state.get('allowed_tabs', handles)
-        selection = st.multiselect("انتخاب تب‌های مجاز", options=list(zip(labels, handles)), format_func=lambda x: x[0], default=[(f"Tab {i+1} — {titles_map.get(h, '(بدون عنوان)')}", h) for h in preselected], label_visibility="collapsed")
+        default_opts = [opt for opt in options if opt[1] in preselected]
+        selection = st.multiselect(
+            "انتخاب تب‌های مجاز",
+            options=options,
+            format_func=lambda x: x[0],
+            default=default_opts,
+            label_visibility="collapsed"
+        )
         # استخراج هندل‌ها از انتخاب
         st.session_state['allowed_tabs'] = [h for (_, h) in selection]
 
